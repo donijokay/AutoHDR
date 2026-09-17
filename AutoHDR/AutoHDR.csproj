@@ -12,7 +12,7 @@
     <StartupObject>AutoHDR.Program</StartupObject>
     <AssemblyName>AutoHDR</AssemblyName>
     <RootNamespace>AutoHDR</RootNamespace>
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <Description>Automatically enable Windows HDR when games are running</Description>
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
