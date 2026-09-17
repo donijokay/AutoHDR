@@ -5,8 +5,11 @@ namespace AutoHDR.Forms;
 
 /// <summary>
 /// System-tray host: arms/disarms AutoHDR, polls for games, toggles HDR.
-/// Tracks the active game by ProcessId so Alt-Tab keeps HDR on; restores
-/// after a short debounce once the process has exited.
+/// Enables HDR while a fullscreen game is in the foreground. When focus
+/// leaves fullscreen (e.g. desktop / Alt-Tab), restores previous HDR after
+/// a short debounce so Windows Print Screen and Snipping Tool work again.
+/// Returning to the fullscreen game within the debounce window cancels restore
+/// and keeps HDR on without flicker.
 /// </summary>
 public sealed class TrayApplicationContext : ApplicationContext
 {
@@ -150,18 +153,11 @@ public sealed class TrayApplicationContext : ApplicationContext
                 return;
             }
 
-            // Foreground is not a fullscreen game. Keep HDR while the tracked process lives.
+            // Foreground is not a fullscreen game (desktop / Alt-Tab / other app).
+            // Always schedule restore so Print Screen works on the desktop even if
+            // the game process is still alive. Debounce avoids HDR flicker on brief focus loss.
             if (_gameActive)
-            {
-                if (_activeProcessId is int activePid && GameDetector.IsProcessAlive(activePid))
-                {
-                    // Alt-Tab / desktop — do not restore HDR yet.
-                    return;
-                }
-
-                // Process exited or cannot be found — debounce restore.
                 ScheduleRestoreDebounce();
-            }
         }
         catch (Exception ex)
         {
@@ -178,7 +174,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _restoreDebounceTimer.Stop();
         _restoreDebounceTimer.Interval = RestoreDebounceMs;
         _restoreDebounceTimer.Start();
-        AppLog.Info($"Game process gone; restoring HDR in {RestoreDebounceMs}ms.");
+        AppLog.Info($"Left fullscreen/desktop; restoring HDR in {RestoreDebounceMs}ms.");
     }
 
     private void CancelRestoreDebounce()
@@ -197,25 +193,20 @@ public sealed class TrayApplicationContext : ApplicationContext
             _restoreDebounceTimer.Stop();
             _restorePending = false;
 
-            // Re-check: game may have relaunched or still be alive.
-            if (_activeProcessId is int pid && GameDetector.IsProcessAlive(pid))
-            {
-                AppLog.Info($"Restore cancelled — process {pid} still alive.");
-                return;
-            }
-
+            // Re-check: user may have returned to the fullscreen game.
             var redetect = _detector.Detect();
             if (redetect.IsGameRunning && redetect.ProcessId is int newPid)
             {
                 _gameActive = true;
                 _activeGame = redetect.ProcessName;
                 _activeProcessId = newPid;
-                AppLog.Info($"Restore cancelled — new game detected: {redetect.ProcessName} (pid {newPid})");
+                AppLog.Info($"Restore cancelled — fullscreen game again: {redetect.ProcessName} (pid {newPid})");
                 _hdr.EnableHdrForGame(_config.AllHdrDisplays);
                 UpdateMenuState();
                 return;
             }
 
+            // Still not fullscreen (desktop or other window) — restore even if old process lives.
             EndGameSessionImmediate();
         }
         catch (Exception ex)
@@ -232,7 +223,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _gameActive = false;
         _activeGame = null;
         _activeProcessId = null;
-        AppLog.Info($"Restoring HDR after game exit ({name ?? "?"} pid {pid?.ToString() ?? "?"}).");
+        AppLog.Info($"Restoring HDR after leaving fullscreen/desktop ({name ?? "?"} pid {pid?.ToString() ?? "?"}).");
         try
         {
             _hdr.RestoreAfterGame();
