@@ -8,13 +8,18 @@
     <UseWindowsForms>true</UseWindowsForms>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
-    <ApplicationIcon />
+    <ApplicationIcon>Assets\autohdr.ico</ApplicationIcon>
     <StartupObject>AutoHDR.Program</StartupObject>
     <AssemblyName>AutoHDR</AssemblyName>
     <RootNamespace>AutoHDR</RootNamespace>
-    <Version>1.0.1</Version>
+    <Version>1.0.3</Version>
     <Description>Automatically enable Windows HDR when games are running</Description>
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\autohdr.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="Assets\autohdr.ico" />
+    <Content Include="Assets\autohdr.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="Assets\autohdr.png" />
+  </ItemGroup>
 
 </Project>
