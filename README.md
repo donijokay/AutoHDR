@@ -4,6 +4,10 @@ Aplikasi system-tray untuk Windows 11 yang **menyalakan HDR otomatis** saat game
 
 System-tray app for Windows 11 that **turns HDR ON** when a fullscreen/borderless game is detected, then **restores the previous HDR state** when the game exits.
 
+
+> **v1.0.6:** Game library (Steam / Epic / XboxGames / custom) with per-game On/Off. Enabled games turn HDR on at **process start** (HDR stays on through Alt-Tab). Fullscreen detection remains as fallback for non-library titles.
+
+> **v1.0.6:** Perpustakaan game (Steam / Epic / XboxGames / kustom) dengan On/Off per game. Game yang On menyalakan HDR saat **proses mulai** (tetap On saat Alt-Tab). Deteksi fullscreen tetap untuk judul di luar library.
 ---
 
 ## Bahasa Indonesia
@@ -42,9 +46,12 @@ Output: `publish\win-x64\AutoHDR.exe`
 3. Menu tray:
    - **Enable / Disable AutoHDR** — arm/disarm
    - **Toggle HDR now** — nyala/mati HDR manual
-   - **Settings** — whitelist exe, start with Windows, interval poll, cakupan fullscreen
+   - **Games…** — perpustakaan game (Steam/Epic/Xbox/custom), On/Off per game
+   - **Settings** — Games + whitelist fallback, start with Windows, interval poll, HDR
    - **Exit**
-4. Jika HDR tidak didukung, muncul balloon tip peringatan.
+4. Game di library dengan **On** → HDR saat proses mulai (tetap On saat Alt-Tab). Proses di luar library → deteksi fullscreen (seperti 1.0.5).
+5. Jika HDR tidak didukung, muncul balloon tip peringatan.
+6. Library disimpan di `%AppData%\AutoHDR\games.json`.
 
 ### Konfigurasi
 File: `%AppData%\AutoHDR\config.json`  
