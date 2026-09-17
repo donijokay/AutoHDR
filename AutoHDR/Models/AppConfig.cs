@@ -27,7 +27,7 @@ public sealed class AppConfig
     public bool StartWithWindows { get; set; } = false;
 
     /// <summary>Minimum window coverage of the monitor (0.0–1.0) to count as fullscreen.</summary>
-    public double FullscreenCoverageThreshold { get; set; } = 0.95;
+    public double FullscreenCoverageThreshold { get; set; } = 0.88;
 
     /// <summary>Apply HDR to all HDR-capable displays (true) or primary only (false).</summary>
     public bool AllHdrDisplays { get; set; } = true;
@@ -38,6 +38,7 @@ public sealed class AppConfig
         "explorer",
         "ApplicationFrameHost",
         "ShellExperienceHost",
+        "ShellHost",
         "SearchHost",
         "SearchUI",
         "StartMenuExperienceHost",
@@ -51,6 +52,24 @@ public sealed class AppConfig
         "RuntimeBroker",
         "SystemSettings",
         "Settings",
+        // Win11 screenshot / snipping / picker overlays (Print Screen flicker)
+        "ScreenClippingHost",
+        "SnippingTool",
+        "ScreenSketch",
+        "PickerHost",
+        "CaptureService",
+        "GameBarPresenceWriter",
+        "XboxGameBarWidgets",
+        "XboxAppGamingOverlay",
+        "XboxGamingOverlay",
+        "GamingOverlay",
+        // Optional noise / media shells
+        "Video.UI",
+        "Microsoft.Photos",
+        "Photos",
+        "HxOutlook",
+        "Win32WebViewHost",
+        "BackgroundTaskHost",
         "chrome",
         "msedge",
         "msedgewebview2",
