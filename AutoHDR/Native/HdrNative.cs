@@ -9,6 +9,7 @@ namespace AutoHDR.Native;
 internal static class HdrNative
 {
     internal const int ERROR_SUCCESS = 0;
+    internal const int ERROR_INSUFFICIENT_BUFFER = 122;
     internal const uint QDC_ONLY_ACTIVE_PATHS = 0x00000002;
 
     internal enum DISPLAYCONFIG_DEVICE_INFO_TYPE : int
@@ -116,6 +117,9 @@ internal static class HdrNative
         public uint cy;
     }
 
+    /// <summary>
+    /// Native size is 48 bytes (largest member of DISPLAYCONFIG_MODE_INFO union).
+    /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     internal struct DISPLAYCONFIG_VIDEO_SIGNAL_INFO
     {
@@ -151,7 +155,11 @@ internal static class HdrNative
         public RECT DesktopImageClip;
     }
 
-    [StructLayout(LayoutKind.Explicit)]
+    /// <summary>
+    /// Explicit Size = sizeof(largest member) = sizeof(TARGET_MODE / VIDEO_SIGNAL_INFO) = 48.
+    /// Required so QueryDisplayConfig marshalling stays correct during mode switches.
+    /// </summary>
+    [StructLayout(LayoutKind.Explicit, Size = 48)]
     internal struct DISPLAYCONFIG_MODE_INFO_UNION
     {
         [FieldOffset(0)] public DISPLAYCONFIG_TARGET_MODE targetMode;
