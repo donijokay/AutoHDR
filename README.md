@@ -8,11 +8,19 @@ System-tray app for Windows 11 that **turns HDR ON** when a fullscreen/borderles
 
 ## Bahasa Indonesia
 
+### Download (siap pakai)
+1. Install **.NET 8 Desktop Runtime (x64)** — wajib:
+   https://dotnet.microsoft.com/download/dotnet/8.0  
+   Pilih **Desktop Runtime** → Windows x64.
+2. Ambil `AutoHDR.zip` dari [Releases](https://github.com/donijokay/AutoHDR/releases).
+3. Extract, jalankan `AutoHDR.exe`.
+
 ### Persyaratan
 - Windows 11 (disarankan; Windows 10 2004+ mungkin berjalan)
 - Layar yang mendukung HDR / Advanced Color
 - GPU + driver yang mendukung Windows HDR
-- .NET 8 SDK (untuk build) — atau gunakan hasil `publish` self-contained
+- [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0) untuk menjalankan build dari Releases
+- .NET 8 SDK hanya jika kamu ingin build dari sumber
 
 ### Build
 ```bat
@@ -49,7 +57,7 @@ File: `%AppData%\AutoHDR\config.json`
 | `extraExclusions` | Tambahan proses yang diabaikan |
 | `startWithWindows` | Daftar di HKCU Run |
 | `pollIntervalMs` | Interval deteksi (default 1500) |
-| `fullscreenCoverageThreshold` | Proporsi monitor yang harus tertutup (default 0.95) |
+| `fullscreenCoverageThreshold` | Proporsi monitor yang harus tertutup (default 0.88) |
 | `allHdrDisplays` | `true` = semua display HDR-capable; `false` = primary saja |
 
 Exclusion bawaan meliputi: explorer, chrome, msedge, firefox, Code, devenv, WINWORD, Discord, Slack, dll.
@@ -63,11 +71,19 @@ Exclusion bawaan meliputi: explorer, chrome, msedge, firefox, Code, devenv, WINW
 
 ## English
 
+### Download (ready to run)
+1. Install **.NET 8 Desktop Runtime (x64)** first:
+   https://dotnet.microsoft.com/download/dotnet/8.0  
+   Choose **Desktop Runtime** → Windows x64.
+2. Get `AutoHDR.zip` from [Releases](https://github.com/donijokay/AutoHDR/releases).
+3. Extract and run `AutoHDR.exe`.
+
 ### Requirements
 - Windows 11 (recommended; Windows 10 2004+ may work)
 - HDR-capable display (Advanced Color)
 - GPU/driver with Windows HDR support
-- .NET 8 SDK to build — or use the self-contained publish output
+- [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0) to run the Releases build
+- .NET 8 SDK only if you build from source
 
 ### Build
 ```bat
