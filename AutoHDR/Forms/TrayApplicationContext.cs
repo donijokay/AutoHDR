@@ -34,6 +34,11 @@ public sealed class TrayApplicationContext : ApplicationContext
     private bool _unsupportedTipShown;
     private bool _restorePending;
 
+    // Start debounce: require 2 consecutive Detect() hits (same PID) before enabling HDR.
+    private int? _pendingPid;
+    private string? _pendingName;
+    private int _pendingHits;
+
     public TrayApplicationContext()
     {
         _configService = new ConfigService();
@@ -118,6 +123,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             if (!_armed)
             {
                 CancelRestoreDebounce();
+                ClearStartDebounce();
                 if (_gameActive)
                     EndGameSessionImmediate();
                 return;
@@ -141,21 +147,49 @@ public sealed class TrayApplicationContext : ApplicationContext
             {
                 CancelRestoreDebounce();
 
-                if (!_gameActive || _activeProcessId != pid)
+                // Already in an established session for this process.
+                if (_gameActive && _activeProcessId == pid)
                 {
-                    _gameActive = true;
-                    _activeGame = result.ProcessName;
-                    _activeProcessId = pid;
-                    AppLog.Info($"Game session started: {result.ProcessName} (pid {pid})");
-                    _hdr.EnableHdrForGame(_config.AllHdrDisplays);
-                    UpdateMenuState();
+                    ClearStartDebounce();
+                    return;
                 }
+
+                // Start debounce: need 2 consecutive polls with the same PID.
+                if (_pendingPid == pid)
+                {
+                    _pendingHits++;
+                    _pendingName = result.ProcessName;
+                }
+                else
+                {
+                    _pendingPid = pid;
+                    _pendingName = result.ProcessName;
+                    _pendingHits = 1;
+                }
+
+                if (_pendingHits < 2)
+                {
+                    AppLog.Info($"Start debounce {_pendingHits}/2: {result.ProcessName} (pid {pid})");
+                    return;
+                }
+
+                ClearStartDebounce();
+                _gameActive = true;
+                _activeGame = result.ProcessName;
+                _activeProcessId = pid;
+                AppLog.Info($"Game session started: {result.ProcessName} (pid {pid})");
+                _hdr.EnableHdrForGame(_config.AllHdrDisplays);
+                UpdateMenuState();
                 return;
             }
 
+            // Detect failed — clear start-debounce streak. Do not schedule restore for
+            // one-frame misses while still pending (not yet an established session).
+            ClearStartDebounce();
+
             // Foreground is not a fullscreen game (desktop / Alt-Tab / other app).
-            // Always schedule restore so Print Screen works on the desktop even if
-            // the game process is still alive. Debounce avoids HDR flicker on brief focus loss.
+            // Only manage restore for established sessions so Print Screen works on the
+            // desktop; debounce avoids HDR flicker on brief focus loss.
             if (_gameActive)
                 ScheduleRestoreDebounce();
         }
@@ -184,6 +218,13 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         _restoreDebounceTimer.Stop();
         _restorePending = false;
+    }
+
+    private void ClearStartDebounce()
+    {
+        _pendingPid = null;
+        _pendingName = null;
+        _pendingHits = 0;
     }
 
     private void OnRestoreDebounceElapsed(object? sender, EventArgs e)
@@ -218,6 +259,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     private void EndGameSessionImmediate()
     {
         CancelRestoreDebounce();
+        ClearStartDebounce();
         string? name = _activeGame;
         int? pid = _activeProcessId;
         _gameActive = false;
