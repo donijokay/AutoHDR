@@ -61,7 +61,7 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         _tray = new NotifyIcon
         {
-            Icon = SystemIcons.Application,
+            Icon = AppIcon.Load(),
             Text = BuildTooltip(),
             Visible = true,
             ContextMenuStrip = _menu,
@@ -267,22 +267,37 @@ public sealed class TrayApplicationContext : ApplicationContext
                 return;
             }
 
-            // Manual toggle should not fight an active game session restore bookkeeping
-            CancelRestoreDebounce();
-            if (_gameActive)
-            {
-                _gameActive = false;
-                _activeGame = null;
-                _activeProcessId = null;
-            }
+            // Do NOT clear _gameActive / pid — mid-game toggle only adjusts HDR ownership.
+            bool currentlyOn = _hdr.IsHdrEnabled(_config.AllHdrDisplays);
+            bool willEnable = !currentlyOn;
 
-            bool ok = _hdr.ToggleHdr(_config.AllHdrDisplays);
+            // Enabling: cancel pending restore so HDR stays on.
+            // Disabling: cancel pending restore; TryManualToggle clears HDR ownership.
+            CancelRestoreDebounce();
+
+            // Only claim after-game restore when AutoHDR is armed.
+            bool claimRestore = _armed && willEnable;
+            bool ok = _hdr.TryManualToggle(_config.AllHdrDisplays, claimRestore, out bool nowEnabled);
+
             _tray.BalloonTipTitle = "AutoHDR";
-            _tray.BalloonTipText = ok
-                ? (_hdr.IsHdrEnabled(_config.AllHdrDisplays) ? "HDR enabled." : "HDR disabled.")
-                : "Failed to toggle HDR.";
-            _tray.BalloonTipIcon = ok ? ToolTipIcon.Info : ToolTipIcon.Error;
-            _tray.ShowBalloonTip(2000);
+            if (!ok)
+            {
+                _tray.BalloonTipText = "Failed to toggle HDR.";
+                _tray.BalloonTipIcon = ToolTipIcon.Error;
+            }
+            else if (nowEnabled)
+            {
+                _tray.BalloonTipText = _armed
+                    ? "HDR on — will turn off after you exit the game."
+                    : "HDR on.";
+                _tray.BalloonTipIcon = ToolTipIcon.Info;
+            }
+            else
+            {
+                _tray.BalloonTipText = "HDR off.";
+                _tray.BalloonTipIcon = ToolTipIcon.Info;
+            }
+            _tray.ShowBalloonTip(2500);
             UpdateMenuState();
         }
         catch (Exception ex)
