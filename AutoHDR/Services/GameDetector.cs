@@ -15,6 +15,7 @@ public sealed class GameDetectionResult
 /// <summary>
 /// Detects fullscreen / borderless-fullscreen foreground windows that look like games.
 /// Uses low-frequency timer polling (~1–2s) for low CPU.
+/// Active sessions are tracked by ProcessId so Alt-Tab does not drop HDR.
 /// </summary>
 public sealed class GameDetector
 {
@@ -79,6 +80,32 @@ public sealed class GameDetector
         catch
         {
             return NotGame();
+        }
+    }
+
+    /// <summary>
+    /// Returns true if a process with the given id is still running.
+    /// </summary>
+    public static bool IsProcessAlive(int processId)
+    {
+        if (processId <= 0)
+            return false;
+        try
+        {
+            using var proc = Process.GetProcessById(processId);
+            return !proc.HasExited;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+        catch
+        {
+            return false;
         }
     }
 
