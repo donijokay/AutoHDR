@@ -96,9 +96,12 @@ public sealed class HdrController
 
                 if (anyTurnedOnByUs)
                     _autoHdrEnabledHdr = true;
-                else if (_priorStates != null && _priorStates.Values.All(wasOn => wasOn))
+                else if (!_autoHdrEnabledHdr
+                         && _priorStates != null
+                         && _priorStates.Values.All(wasOn => wasOn))
                 {
-                    // Already fully on before we got here — no restore needed
+                    // User already had HDR fully on before AutoHDR — no restore needed.
+                    // Do NOT clear here when we already own (e.g. manual Toggle HDR with prior=off).
                     _autoHdrEnabledHdr = false;
                     _priorStates = null;
                 }
@@ -162,42 +165,94 @@ public sealed class HdrController
         }
     }
 
-    /// <summary>Manual toggle; clears AutoHDR ownership of restore state.</summary>
-    public bool ToggleHdr(bool allDisplays)
+    /// <summary>
+    /// Manual HDR toggle.
+    /// When <paramref name="claimRestoreForGameExit"/> is true and enabling: snapshots prior
+    /// state and claims ownership so <see cref="RestoreAfterGame"/> can turn HDR off later.
+    /// When disabling: turns HDR off (or restores prior if owned) and clears ownership.
+    /// Enabling never clears ownership.
+    /// </summary>
+    public bool TryManualToggle(bool allDisplays, bool claimRestoreForGameExit, out bool nowEnabled)
     {
+        nowEnabled = false;
         try
         {
-            var capable = QueryHdrCapableDisplays(allDisplays).Where(d => d.Supported).ToList();
-            if (capable.Count == 0)
-                return false;
-
-            bool enable = !capable.All(d => d.Enabled);
-            bool ok = false;
-            foreach (var d in capable)
-            {
-                if (SetAdvancedColor(d.AdapterId, d.TargetId, enable))
-                    ok = true;
-            }
-
             lock (_gate)
             {
+                var capable = QueryHdrCapableDisplays(allDisplays).Where(d => d.Supported).ToList();
+                if (capable.Count == 0)
+                    return false;
+
+                bool enable = !capable.All(d => d.Enabled);
+
+                if (enable)
+                {
+                    if (claimRestoreForGameExit)
+                    {
+                        // Snapshot prior only if we do not already own restore state.
+                        if (!_autoHdrEnabledHdr || _priorStates == null)
+                            _priorStates = capable.ToDictionary(KeyOf, d => d.Enabled, StringComparer.Ordinal);
+                    }
+
+                    bool ok = false;
+                    foreach (var d in capable)
+                    {
+                        if (d.Enabled)
+                        {
+                            ok = true;
+                            continue;
+                        }
+                        if (SetAdvancedColor(d.AdapterId, d.TargetId, enable: true))
+                            ok = true;
+                    }
+
+                    if (ok)
+                    {
+                        if (claimRestoreForGameExit)
+                            _autoHdrEnabledHdr = true;
+                        nowEnabled = true;
+                    }
+                    return ok;
+                }
+
+                // Disabling: restore to prior if we own, else force off.
+                bool disabledOk = false;
+                if (_autoHdrEnabledHdr && _priorStates != null)
+                {
+                    var prior = _priorStates;
+                    foreach (var d in capable)
+                    {
+                        bool target = prior.TryGetValue(KeyOf(d), out var wasEnabled) && wasEnabled;
+                        if (SetAdvancedColor(d.AdapterId, d.TargetId, target))
+                            disabledOk = true;
+                    }
+                }
+                else
+                {
+                    foreach (var d in capable)
+                    {
+                        if (SetAdvancedColor(d.AdapterId, d.TargetId, enable: false))
+                            disabledOk = true;
+                    }
+                }
+
                 _autoHdrEnabledHdr = false;
                 _priorStates = null;
+                nowEnabled = false;
+                return disabledOk;
             }
-
-            return ok;
         }
         catch (Exception ex)
         {
-            AppLog.Error("ToggleHdr failed", ex);
-            lock (_gate)
-            {
-                _autoHdrEnabledHdr = false;
-                _priorStates = null;
-            }
+            AppLog.Error("TryManualToggle failed", ex);
+            nowEnabled = false;
             return false;
         }
     }
+
+    /// <summary>Manual toggle without claiming game-exit restore ownership.</summary>
+    public bool ToggleHdr(bool allDisplays)
+        => TryManualToggle(allDisplays, claimRestoreForGameExit: false, out _);
 
     internal List<DisplayHdrState> QueryHdrCapableDisplays(bool allDisplays)
     {
