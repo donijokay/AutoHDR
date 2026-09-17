@@ -5,15 +5,14 @@ namespace AutoHDR.Forms;
 
 /// <summary>
 /// System-tray host: arms/disarms AutoHDR, polls for games, toggles HDR.
-/// Enables HDR while a fullscreen game is in the foreground. When focus
-/// leaves fullscreen (e.g. desktop / Alt-Tab), restores previous HDR after
-/// a short debounce so Windows Print Screen and Snipping Tool work again.
-/// Returning to the fullscreen game within the debounce window cancels restore
-/// and keeps HDR on without flicker.
+/// v1.0.6: library-tracked games enable HDR on process start (no fullscreen wait)
+/// and restore only after process exit (+ debounce). Fullscreen detection remains
+/// as fallback for processes not in the library (or with Enabled=Off).
 /// </summary>
 public sealed class TrayApplicationContext : ApplicationContext
 {
     private const int RestoreDebounceMs = 2500;
+    private const int LibraryScanIntervalMs = 3 * 60 * 1000; // ~3 minutes
 
     private readonly NotifyIcon _tray;
     private readonly ContextMenuStrip _menu;
@@ -21,8 +20,10 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly ToolStripMenuItem _toggleHdrItem;
     private readonly System.Windows.Forms.Timer _timer;
     private readonly System.Windows.Forms.Timer _restoreDebounceTimer;
+    private readonly System.Windows.Forms.Timer _libraryScanTimer;
 
     private readonly ConfigService _configService;
+    private readonly GameLibraryService _library;
     private readonly HdrController _hdr;
     private AppConfig _config;
     private GameDetector _detector;
@@ -31,10 +32,12 @@ public sealed class TrayApplicationContext : ApplicationContext
     private bool _gameActive;
     private string? _activeGame;
     private int? _activeProcessId;
+    private bool _librarySession; // true = keep HDR while process alive (ignore Alt-Tab)
     private bool _unsupportedTipShown;
     private bool _restorePending;
 
     // Start debounce: require 2 consecutive Detect() hits (same PID) before enabling HDR.
+    // Used only for the fullscreen fallback path (not library sessions).
     private int? _pendingPid;
     private string? _pendingName;
     private int _pendingHits;
@@ -43,6 +46,11 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         _configService = new ConfigService();
         _config = _configService.Load();
+        _library = new GameLibraryService();
+        _library.Load();
+        try { _library.Scan(force: true); }
+        catch (Exception ex) { AppLog.Warn($"Initial library scan failed: {ex.Message}"); }
+
         _hdr = new HdrController();
         _detector = new GameDetector(_config);
         _armed = _config.Enabled;
@@ -60,6 +68,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _menu = new ContextMenuStrip();
         _menu.Items.Add(_enableItem);
         _menu.Items.Add(_toggleHdrItem);
+        _menu.Items.Add(new ToolStripMenuItem("Games…", null, OnGames));
         _menu.Items.Add(new ToolStripMenuItem("Settings…", null, OnSettings));
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add(new ToolStripMenuItem("Exit", null, OnExit));
@@ -86,7 +95,18 @@ public sealed class TrayApplicationContext : ApplicationContext
         };
         _restoreDebounceTimer.Tick += OnRestoreDebounceElapsed;
 
-        // Startup balloon if HDR unsupported
+        _libraryScanTimer = new System.Windows.Forms.Timer
+        {
+            Interval = LibraryScanIntervalMs,
+        };
+        _libraryScanTimer.Tick += (_, _) =>
+        {
+            try { _library.Scan(force: false); }
+            catch (Exception ex) { AppLog.Warn($"Periodic library scan failed: {ex.Message}"); }
+        };
+        _libraryScanTimer.Start();
+
+        // Startup balloon
         try
         {
             if (!_hdr.IsHdrSupported(_config.AllHdrDisplays))
@@ -99,12 +119,13 @@ public sealed class TrayApplicationContext : ApplicationContext
             }
             else
             {
+                int enabledGames = _library.EnabledCount;
                 _tray.BalloonTipTitle = "AutoHDR";
                 _tray.BalloonTipText = _armed
-                    ? "Armed — HDR will turn on when a game goes fullscreen."
+                    ? $"Armed — library auto-detect ({enabledGames} games On). HDR on process start or fullscreen."
                     : "Disarmed — use the tray menu to enable.";
                 _tray.BalloonTipIcon = ToolTipIcon.Info;
-                _tray.ShowBalloonTip(2500);
+                _tray.ShowBalloonTip(3200);
             }
         }
         catch (Exception ex)
@@ -113,7 +134,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
 
         UpdateMenuState();
-        AppLog.Info("AutoHDR started.");
+        AppLog.Info($"AutoHDR started (library: {_library.Games.Count} games, { _library.EnabledCount} enabled).");
     }
 
     private void OnPoll(object? sender, EventArgs e)
@@ -142,13 +163,67 @@ public sealed class TrayApplicationContext : ApplicationContext
                 return;
             }
 
-            var result = _detector.Detect();
-            if (result.IsGameRunning && result.ProcessId is int pid)
+            // ── A) Library process tracking ──────────────────────────────
+            var running = _library.FindRunningEnabledGame();
+            if (running is { } libHit)
             {
                 CancelRestoreDebounce();
 
-                // Already in an established session for this process.
-                if (_gameActive && _activeProcessId == pid)
+                if (_gameActive && _librarySession && _activeProcessId == libHit.ProcessId)
+                {
+                    ClearStartDebounce();
+                    return; // keep HDR while process alive (Alt-Tab OK)
+                }
+
+                // New or switched library session — enable immediately (no start debounce)
+                ClearStartDebounce();
+                _gameActive = true;
+                _librarySession = true;
+                _activeGame = libHit.Game.Name;
+                _activeProcessId = libHit.ProcessId;
+                AppLog.Info($"library process HDR: {libHit.Game.Name} ({libHit.Game.ExeName}) pid {libHit.ProcessId}");
+                _hdr.EnableHdrForGame(_config.AllHdrDisplays);
+                UpdateMenuState();
+                return;
+            }
+
+            // Library session but process gone → debounce restore
+            if (_gameActive && _librarySession)
+            {
+                ClearStartDebounce();
+                if (_activeProcessId is int libPid && GameDetector.IsProcessAlive(libPid))
+                {
+                    // Process still alive but FindRunningEnabledGame missed (access race) — keep
+                    return;
+                }
+                ScheduleRestoreDebounce(libraryExit: true);
+                return;
+            }
+
+            // ── B) Fullscreen fallback (non-library / disabled library) ──
+            var result = _detector.Detect();
+            if (result.IsGameRunning && result.ProcessId is int pid)
+            {
+                // Don't double-enable / steal from library path for enabled library exes
+                if (_library.IsEnabledLibraryExe(result.ProcessName))
+                {
+                    // Process may still be starting; next poll will catch via library path
+                    ClearStartDebounce();
+                    return;
+                }
+
+                // Disabled library entry → Off means Off (skip fullscreen fallback)
+                if (_library.IsLibraryExe(result.ProcessName))
+                {
+                    ClearStartDebounce();
+                    if (_gameActive && !_librarySession)
+                        ScheduleRestoreDebounce(libraryExit: false);
+                    return;
+                }
+
+                CancelRestoreDebounce();
+
+                if (_gameActive && !_librarySession && _activeProcessId == pid)
                 {
                     ClearStartDebounce();
                     return;
@@ -175,23 +250,21 @@ public sealed class TrayApplicationContext : ApplicationContext
 
                 ClearStartDebounce();
                 _gameActive = true;
+                _librarySession = false;
                 _activeGame = result.ProcessName;
                 _activeProcessId = pid;
-                AppLog.Info($"Game session started: {result.ProcessName} (pid {pid})");
+                AppLog.Info($"Game session started (fullscreen): {result.ProcessName} (pid {pid})");
                 _hdr.EnableHdrForGame(_config.AllHdrDisplays);
                 UpdateMenuState();
                 return;
             }
 
-            // Detect failed — clear start-debounce streak. Do not schedule restore for
-            // one-frame misses while still pending (not yet an established session).
             ClearStartDebounce();
 
-            // Foreground is not a fullscreen game (desktop / Alt-Tab / other app).
-            // Only manage restore for established sessions so Print Screen works on the
-            // desktop; debounce avoids HDR flicker on brief focus loss.
-            if (_gameActive)
-                ScheduleRestoreDebounce();
+            // Foreground is not a fullscreen game — for fullscreen sessions only,
+            // schedule restore so Print Screen works on the desktop.
+            if (_gameActive && !_librarySession)
+                ScheduleRestoreDebounce(libraryExit: false);
         }
         catch (Exception ex)
         {
@@ -199,7 +272,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
     }
 
-    private void ScheduleRestoreDebounce()
+    private void ScheduleRestoreDebounce(bool libraryExit)
     {
         if (_restorePending)
             return;
@@ -208,7 +281,9 @@ public sealed class TrayApplicationContext : ApplicationContext
         _restoreDebounceTimer.Stop();
         _restoreDebounceTimer.Interval = RestoreDebounceMs;
         _restoreDebounceTimer.Start();
-        AppLog.Info($"Left fullscreen/desktop; restoring HDR in {RestoreDebounceMs}ms.");
+        AppLog.Info(libraryExit
+            ? $"Library process exited; restoring HDR in {RestoreDebounceMs}ms."
+            : $"Left fullscreen/desktop; restoring HDR in {RestoreDebounceMs}ms.");
     }
 
     private void CancelRestoreDebounce()
@@ -234,11 +309,33 @@ public sealed class TrayApplicationContext : ApplicationContext
             _restoreDebounceTimer.Stop();
             _restorePending = false;
 
-            // Re-check: user may have returned to the fullscreen game.
+            // Library path: cancel restore if process came back
+            if (_librarySession)
+            {
+                var again = _library.FindRunningEnabledGame();
+                if (again is { } hit)
+                {
+                    _gameActive = true;
+                    _librarySession = true;
+                    _activeGame = hit.Game.Name;
+                    _activeProcessId = hit.ProcessId;
+                    AppLog.Info($"Restore cancelled — library process again: {hit.Game.Name} (pid {hit.ProcessId})");
+                    _hdr.EnableHdrForGame(_config.AllHdrDisplays);
+                    UpdateMenuState();
+                    return;
+                }
+
+                EndGameSessionImmediate();
+                return;
+            }
+
+            // Fullscreen path: re-check Detect()
             var redetect = _detector.Detect();
-            if (redetect.IsGameRunning && redetect.ProcessId is int newPid)
+            if (redetect.IsGameRunning && redetect.ProcessId is int newPid
+                && !_library.IsLibraryExe(redetect.ProcessName))
             {
                 _gameActive = true;
+                _librarySession = false;
                 _activeGame = redetect.ProcessName;
                 _activeProcessId = newPid;
                 AppLog.Info($"Restore cancelled — fullscreen game again: {redetect.ProcessName} (pid {newPid})");
@@ -247,7 +344,6 @@ public sealed class TrayApplicationContext : ApplicationContext
                 return;
             }
 
-            // Still not fullscreen (desktop or other window) — restore even if old process lives.
             EndGameSessionImmediate();
         }
         catch (Exception ex)
@@ -262,10 +358,14 @@ public sealed class TrayApplicationContext : ApplicationContext
         ClearStartDebounce();
         string? name = _activeGame;
         int? pid = _activeProcessId;
+        bool wasLibrary = _librarySession;
         _gameActive = false;
+        _librarySession = false;
         _activeGame = null;
         _activeProcessId = null;
-        AppLog.Info($"Restoring HDR after leaving fullscreen/desktop ({name ?? "?"} pid {pid?.ToString() ?? "?"}).");
+        AppLog.Info(wasLibrary
+            ? $"Restoring HDR after library game exit ({name ?? "?"} pid {pid?.ToString() ?? "?"})."
+            : $"Restoring HDR after leaving fullscreen/desktop ({name ?? "?"} pid {pid?.ToString() ?? "?"}).");
         try
         {
             _hdr.RestoreAfterGame();
@@ -309,15 +409,10 @@ public sealed class TrayApplicationContext : ApplicationContext
                 return;
             }
 
-            // Do NOT clear _gameActive / pid — mid-game toggle only adjusts HDR ownership.
             bool currentlyOn = _hdr.IsHdrEnabled(_config.AllHdrDisplays);
             bool willEnable = !currentlyOn;
-
-            // Enabling: cancel pending restore so HDR stays on.
-            // Disabling: cancel pending restore; TryManualToggle clears HDR ownership.
             CancelRestoreDebounce();
 
-            // Only claim after-game restore when AutoHDR is armed.
             bool claimRestore = _armed && willEnable;
             bool ok = _hdr.TryManualToggle(_config.AllHdrDisplays, claimRestore, out bool nowEnabled);
 
@@ -348,11 +443,15 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
     }
 
-    private void OnSettings(object? sender, EventArgs e)
+    private void OnGames(object? sender, EventArgs e) => OpenSettings(selectGamesTab: true);
+
+    private void OnSettings(object? sender, EventArgs e) => OpenSettings(selectGamesTab: false);
+
+    private void OpenSettings(bool selectGamesTab)
     {
         try
         {
-            using var form = new SettingsForm(_configService, _config);
+            using var form = new SettingsForm(_configService, _config, _library, selectGamesTab);
             if (form.ShowDialog() == DialogResult.OK)
             {
                 _config = _configService.Load();
@@ -361,10 +460,16 @@ public sealed class TrayApplicationContext : ApplicationContext
                 _timer.Interval = Math.Clamp(_config.PollIntervalMs, 500, 10000);
                 UpdateMenuState();
             }
+            else
+            {
+                // Games tab may have saved library changes even on Cancel of general —
+                // SettingsForm saves library live; refresh tooltip count.
+                UpdateMenuState();
+            }
         }
         catch (Exception ex)
         {
-            AppLog.Error("OnSettings failed", ex);
+            AppLog.Error("OpenSettings failed", ex);
         }
     }
 
@@ -383,6 +488,7 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         _timer.Stop();
         _restoreDebounceTimer.Stop();
+        _libraryScanTimer.Stop();
         _tray.Visible = false;
         _tray.Dispose();
         _menu.Dispose();
@@ -410,7 +516,6 @@ public sealed class TrayApplicationContext : ApplicationContext
             status += $" | {_activeGame}";
         else if (_hdr.IsHdrEnabled(_config.AllHdrDisplays))
             status += " | HDR on";
-        // NotifyIcon.Text max ~63 chars
         string tip = $"AutoHDR — {status}";
         return tip.Length <= 63 ? tip : tip[..63];
     }
@@ -421,6 +526,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         {
             _timer.Dispose();
             _restoreDebounceTimer.Dispose();
+            _libraryScanTimer.Dispose();
             _tray.Dispose();
             _menu.Dispose();
         }

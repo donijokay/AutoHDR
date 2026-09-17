@@ -7,70 +7,177 @@ public sealed class SettingsForm : Form
 {
     private readonly ConfigService _configService;
     private readonly AppConfig _config;
+    private readonly GameLibraryService _library;
+
+    private readonly TabControl _tabs;
+    private readonly ListView _gamesList;
+    private readonly Label _gamesCountLabel;
     private readonly TextBox _whitelistBox;
     private readonly CheckBox _startWithWindows;
     private readonly CheckBox _allDisplays;
     private readonly NumericUpDown _pollInterval;
     private readonly NumericUpDown _coverage;
+    private readonly ListBox _customFoldersList;
 
-    public SettingsForm(ConfigService configService, AppConfig config)
+    private bool _suppressGameCheck;
+
+    public SettingsForm(
+        ConfigService configService,
+        AppConfig config,
+        GameLibraryService library,
+        bool selectGamesTab = false)
     {
         _configService = configService;
         _config = config;
+        _library = library;
 
         Text = "AutoHDR Settings";
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(520, 520);
+        ClientSize = new Size(640, 580);
         Font = new Font("Segoe UI", 9.5f);
         ShowInTaskbar = true;
-        Padding = new Padding(0);
         AutoScaleMode = AutoScaleMode.Dpi;
 
         try { Icon = AppIcon.Load(); } catch { /* ignore */ }
 
-        // --- Root layout ---
         var root = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
             RowCount = 3,
-            Padding = new Padding(16, 16, 16, 12),
+            Padding = new Padding(14, 14, 14, 10),
         };
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f)); // content
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // config path
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // buttons
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-        var content = new TableLayoutPanel
+        _tabs = new TabControl { Dock = DockStyle.Fill };
+
+        // ── Games tab ────────────────────────────────────────────────────
+        var tabGames = new TabPage("Games") { Padding = new Padding(10) };
+        var gamesLayout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 3,
-            Padding = new Padding(0),
+            RowCount = 4,
         };
-        content.RowStyles.Add(new RowStyle(SizeType.Percent, 100f)); // Game detection
-        content.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // HDR
-        content.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // General
+        gamesLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        gamesLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+        gamesLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        gamesLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-        // === Game detection ===
-        var grpGame = new GroupBox
+        _gamesCountLabel = new Label
         {
-            Text = "Game detection",
-            Dock = DockStyle.Fill,
-            Padding = new Padding(12, 8, 12, 12),
-            Margin = new Padding(0, 0, 0, 10),
+            AutoSize = true,
+            Margin = new Padding(0, 0, 0, 6),
+            Text = "Enabled: 0",
         };
-        var gameInner = new TableLayoutPanel
+
+        var grpGames = new GroupBox
+        {
+            Text = "Game library (On = HDR when process starts)",
+            Dock = DockStyle.Fill,
+            Padding = new Padding(10, 8, 10, 10),
+        };
+
+        _gamesList = new ListView
+        {
+            Dock = DockStyle.Fill,
+            View = View.Details,
+            CheckBoxes = true,
+            FullRowSelect = true,
+            GridLines = true,
+            HideSelection = false,
+            MultiSelect = false,
+            ShowItemToolTips = true,
+        };
+        _gamesList.Columns.Add("Name", 220);
+        _gamesList.Columns.Add("Source", 70);
+        _gamesList.Columns.Add("Status", 90);
+        _gamesList.Columns.Add("Exe", 160);
+        _gamesList.ItemChecked += OnGameItemChecked;
+        grpGames.Controls.Add(_gamesList);
+
+        var gamesButtons = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Padding = new Padding(0, 8, 0, 0),
+        };
+        var btnRefresh = new Button { Text = "Refresh", Size = new Size(100, 30), Margin = new Padding(0, 0, 8, 0) };
+        btnRefresh.Click += (_, _) => { _library.Scan(force: true); ReloadGamesList(); };
+        var btnAddFolder = new Button { Text = "Add folder…", Size = new Size(110, 30), Margin = new Padding(0, 0, 8, 0) };
+        btnAddFolder.Click += OnAddFolder;
+        var btnAddExe = new Button { Text = "Add exe…", Size = new Size(100, 30), Margin = new Padding(0, 0, 8, 0) };
+        btnAddExe.Click += OnAddExe;
+        var btnEnableAll = new Button { Text = "Enable all", Size = new Size(100, 30), Margin = new Padding(0, 0, 8, 0) };
+        btnEnableAll.Click += (_, _) => SetAllGamesEnabled(true);
+        var btnDisableAll = new Button { Text = "Disable all", Size = new Size(100, 30) };
+        btnDisableAll.Click += (_, _) => SetAllGamesEnabled(false);
+        gamesButtons.Controls.AddRange(new Control[] { btnRefresh, btnAddFolder, btnAddExe, btnEnableAll, btnDisableAll });
+
+        var grpFolders = new GroupBox
+        {
+            Text = "Custom folders",
+            Dock = DockStyle.Top,
+            Height = 100,
+            Padding = new Padding(10, 6, 10, 8),
+            Margin = new Padding(0, 8, 0, 0),
+        };
+        _customFoldersList = new ListBox
+        {
+            Dock = DockStyle.Fill,
+            IntegralHeight = false,
+        };
+        var folderBtnPanel = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Right,
+            Width = 90,
+            FlowDirection = FlowDirection.TopDown,
+            Padding = new Padding(6, 0, 0, 0),
+        };
+        var btnRemoveFolder = new Button { Text = "Remove", Size = new Size(80, 28) };
+        btnRemoveFolder.Click += OnRemoveFolder;
+        folderBtnPanel.Controls.Add(btnRemoveFolder);
+        grpFolders.Controls.Add(_customFoldersList);
+        grpFolders.Controls.Add(folderBtnPanel);
+
+        gamesLayout.Controls.Add(_gamesCountLabel, 0, 0);
+        gamesLayout.Controls.Add(grpGames, 0, 1);
+        gamesLayout.Controls.Add(gamesButtons, 0, 2);
+        gamesLayout.Controls.Add(grpFolders, 0, 3);
+        tabGames.Controls.Add(gamesLayout);
+
+        // ── Detection tab ────────────────────────────────────────────────
+        var tabDetect = new TabPage("Detection") { Padding = new Padding(10) };
+        var detectLayout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
             RowCount = 2,
-            Padding = new Padding(0, 4, 0, 0),
         };
-        gameInner.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
-        gameInner.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        detectLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+        detectLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+        var grpWhitelist = new GroupBox
+        {
+            Text = "Fullscreen fallback whitelist (optional)",
+            Dock = DockStyle.Fill,
+            Padding = new Padding(12, 8, 12, 12),
+        };
+        var whiteInner = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
+        };
+        whiteInner.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+        whiteInner.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
         _whitelistBox = new TextBox
         {
@@ -80,24 +187,72 @@ public sealed class SettingsForm : Form
             AcceptsReturn = true,
             Font = new Font("Consolas", 9.5f),
             Text = string.Join(Environment.NewLine, config.Whitelist),
-            Margin = new Padding(0, 0, 0, 6),
         };
-
         var lblWhitelistHelp = new Label
         {
-            Text = "One executable name per line (e.g. Cyberpunk2077). Leave empty to detect any fullscreen game. Stubborn / windowed-borderless titles can be whitelisted by exe name (e.g. Resonance).",
+            Text = "Used only for games NOT in the library (or as extra filter). One exe name per line. Leave empty to detect any fullscreen game. Library games with Enabled=On skip this path and enable HDR on process start.",
             AutoSize = false,
             Dock = DockStyle.Top,
-            Height = 48,
+            Height = 56,
             ForeColor = SystemColors.GrayText,
-            Margin = new Padding(0),
+        };
+        whiteInner.Controls.Add(_whitelistBox, 0, 0);
+        whiteInner.Controls.Add(lblWhitelistHelp, 0, 1);
+        grpWhitelist.Controls.Add(whiteInner);
+
+        var grpCov = new GroupBox
+        {
+            Text = "Fullscreen coverage",
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            Padding = new Padding(12, 8, 12, 12),
+            Margin = new Padding(0, 10, 0, 0),
+        };
+        var covRow = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            ColumnCount = 2,
+            Padding = new Padding(0, 4, 0, 0),
+        };
+        covRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        covRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        var lblCov = new Label
+        {
+            Text = "Coverage threshold (0.50–1.00)",
+            AutoSize = true,
+            Anchor = AnchorStyles.Left,
+            Margin = new Padding(0, 6, 8, 6),
+        };
+        _coverage = new NumericUpDown
+        {
+            Minimum = 0.50m,
+            Maximum = 1.00m,
+            DecimalPlaces = 2,
+            Increment = 0.01m,
+            Value = (decimal)Math.Clamp(config.FullscreenCoverageThreshold, 0.5, 1.0),
+            Width = 110,
+            Margin = new Padding(0, 4, 0, 4),
+            Anchor = AnchorStyles.Right,
+        };
+        covRow.Controls.Add(lblCov, 0, 0);
+        covRow.Controls.Add(_coverage, 1, 0);
+        grpCov.Controls.Add(covRow);
+
+        detectLayout.Controls.Add(grpWhitelist, 0, 0);
+        detectLayout.Controls.Add(grpCov, 0, 1);
+        tabDetect.Controls.Add(detectLayout);
+
+        // ── General tab ──────────────────────────────────────────────────
+        var tabGeneral = new TabPage("General") { Padding = new Padding(10) };
+        var generalOuter = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            ColumnCount = 1,
+            RowCount = 2,
         };
 
-        gameInner.Controls.Add(_whitelistBox, 0, 0);
-        gameInner.Controls.Add(lblWhitelistHelp, 0, 1);
-        grpGame.Controls.Add(gameInner);
-
-        // === HDR ===
         var grpHdr = new GroupBox
         {
             Text = "HDR",
@@ -111,44 +266,37 @@ public sealed class SettingsForm : Form
             Text = "Apply to all HDR-capable displays (unchecked = primary only)",
             AutoSize = false,
             Dock = DockStyle.Top,
-            Height = 36,
+            Height = 40,
             Checked = config.AllHdrDisplays,
+            MaximumSize = new Size(560, 0),
             Margin = new Padding(0, 4, 0, 0),
-            Padding = new Padding(0, 2, 0, 2),
         };
-        // Ensure text wraps within the group box width
-        _allDisplays.MaximumSize = new Size(460, 0);
         grpHdr.Controls.Add(_allDisplays);
 
-        // === General ===
         var grpGeneral = new GroupBox
         {
             Text = "General",
             Dock = DockStyle.Top,
             AutoSize = true,
             Padding = new Padding(12, 8, 12, 12),
-            Margin = new Padding(0),
         };
         var generalInner = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
             AutoSize = true,
             ColumnCount = 2,
-            RowCount = 3,
+            RowCount = 2,
             Padding = new Padding(0, 4, 0, 0),
         };
         generalInner.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
         generalInner.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        generalInner.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        generalInner.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        generalInner.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
         _startWithWindows = new CheckBox
         {
             Text = "Start with Windows",
             AutoSize = true,
             Checked = config.StartWithWindows,
-            Margin = new Padding(0, 4, 0, 8),
+            Margin = new Padding(0, 4, 0, 10),
         };
         generalInner.Controls.Add(_startWithWindows, 0, 0);
         generalInner.SetColumnSpan(_startWithWindows, 2);
@@ -172,42 +320,20 @@ public sealed class SettingsForm : Form
         };
         generalInner.Controls.Add(lblPoll, 0, 1);
         generalInner.Controls.Add(_pollInterval, 1, 1);
-
-        var lblCov = new Label
-        {
-            Text = "Fullscreen coverage (0.50–1.00)",
-            AutoSize = true,
-            Anchor = AnchorStyles.Left,
-            Margin = new Padding(0, 6, 8, 6),
-        };
-        _coverage = new NumericUpDown
-        {
-            Minimum = 0.50m,
-            Maximum = 1.00m,
-            DecimalPlaces = 2,
-            Increment = 0.01m,
-            Value = (decimal)Math.Clamp(config.FullscreenCoverageThreshold, 0.5, 1.0),
-            Width = 110,
-            Margin = new Padding(0, 4, 0, 4),
-            Anchor = AnchorStyles.Right,
-        };
-        generalInner.Controls.Add(lblCov, 0, 2);
-        generalInner.Controls.Add(_coverage, 1, 2);
-
         grpGeneral.Controls.Add(generalInner);
 
-        content.Controls.Add(grpGame, 0, 0);
-        content.Controls.Add(grpHdr, 0, 1);
-        content.Controls.Add(grpGeneral, 0, 2);
+        generalOuter.Controls.Add(grpHdr, 0, 0);
+        generalOuter.Controls.Add(grpGeneral, 0, 1);
+        tabGeneral.Controls.Add(generalOuter);
 
-        // === Config path ===
-        var pathPanel = new Panel
-        {
-            Dock = DockStyle.Top,
-            Height = 28,
-            Padding = new Padding(0),
-            Margin = new Padding(0, 4, 0, 4),
-        };
+        _tabs.TabPages.Add(tabGames);
+        _tabs.TabPages.Add(tabDetect);
+        _tabs.TabPages.Add(tabGeneral);
+        if (selectGamesTab)
+            _tabs.SelectedTab = tabGames;
+
+        // Path + buttons
+        var pathPanel = new Panel { Dock = DockStyle.Top, Height = 28, Margin = new Padding(0, 4, 0, 4) };
         var lblPathCaption = new Label
         {
             Text = "Config:",
@@ -217,12 +343,12 @@ public sealed class SettingsForm : Form
         };
         var lblPath = new Label
         {
-            Text = _configService.ConfigPath,
+            Text = _configService.ConfigPath + "  ·  " + _library.LibraryPath,
             AutoSize = false,
             AutoEllipsis = true,
             ForeColor = SystemColors.GrayText,
             Location = new Point(52, 5),
-            Size = new Size(430, 20),
+            Size = new Size(540, 20),
             Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top,
         };
         pathPanel.Controls.Add(lblPathCaption);
@@ -232,7 +358,6 @@ public sealed class SettingsForm : Form
             lblPath.Width = Math.Max(40, pathPanel.ClientSize.Width - 52);
         };
 
-        // === Buttons ===
         var buttonPanel = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -240,7 +365,6 @@ public sealed class SettingsForm : Form
             AutoSize = true,
             WrapContents = false,
             Padding = new Padding(0, 8, 0, 4),
-            Margin = new Padding(0),
         };
         var btnCancel = new Button
         {
@@ -259,19 +383,135 @@ public sealed class SettingsForm : Form
         btnOk.Click += (_, _) => ApplyAndSave();
         buttonPanel.Controls.Add(btnCancel);
         buttonPanel.Controls.Add(btnOk);
-
         AcceptButton = btnOk;
         CancelButton = btnCancel;
 
-        root.Controls.Add(content, 0, 0);
+        root.Controls.Add(_tabs, 0, 0);
         root.Controls.Add(pathPanel, 0, 1);
         root.Controls.Add(buttonPanel, 0, 2);
-
         Controls.Add(root);
+
+        // Initial scan when opening settings, then populate UI
+        try { _library.Scan(force: true); } catch { /* ignore */ }
+        ReloadGamesList();
+        ReloadCustomFolders();
+    }
+
+    private void ReloadGamesList()
+    {
+        _suppressGameCheck = true;
+        try
+        {
+            _gamesList.BeginUpdate();
+            _gamesList.Items.Clear();
+            foreach (var g in _library.Games.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase))
+            {
+                var item = new ListViewItem(g.Name)
+                {
+                    Checked = g.Enabled,
+                    Tag = g.Id,
+                    ToolTipText = string.IsNullOrEmpty(g.ExePath) ? g.ExeName : g.ExePath,
+                };
+                item.SubItems.Add(g.Source);
+                item.SubItems.Add(g.IsFound ? "Found" : "Not found");
+                item.SubItems.Add(g.ExeName);
+                if (!g.IsFound)
+                    item.ForeColor = SystemColors.GrayText;
+                _gamesList.Items.Add(item);
+            }
+            _gamesList.EndUpdate();
+            UpdateGamesCountLabel();
+        }
+        finally
+        {
+            _suppressGameCheck = false;
+        }
+    }
+
+    private void ReloadCustomFolders()
+    {
+        _customFoldersList.Items.Clear();
+        foreach (var f in _library.CustomFolders)
+            _customFoldersList.Items.Add(f);
+    }
+
+    private void UpdateGamesCountLabel()
+    {
+        int enabled = _library.EnabledCount;
+        int total = _library.Games.Count;
+        _gamesCountLabel.Text = $"Enabled: {enabled} / {total} games  ·  New installs default to On";
+    }
+
+    private void OnGameItemChecked(object? sender, ItemCheckedEventArgs e)
+    {
+        if (_suppressGameCheck) return;
+        if (e.Item.Tag is not string id) return;
+        _library.SetEnabled(id, e.Item.Checked);
+        UpdateGamesCountLabel();
+    }
+
+    private void SetAllGamesEnabled(bool enabled)
+    {
+        var updates = _library.Games.Select(g => (g.Id, enabled));
+        _library.SetAllEnabled(updates);
+        ReloadGamesList();
+    }
+
+    private void OnAddFolder(object? sender, EventArgs e)
+    {
+        using var dlg = new FolderBrowserDialog
+        {
+            Description = "Select a folder that contains games",
+            UseDescriptionForTitle = true,
+        };
+        if (dlg.ShowDialog(this) != DialogResult.OK)
+            return;
+        if (_library.AddCustomFolder(dlg.SelectedPath))
+        {
+            ReloadCustomFolders();
+            ReloadGamesList();
+        }
+    }
+
+    private void OnRemoveFolder(object? sender, EventArgs e)
+    {
+        if (_customFoldersList.SelectedItem is not string folder)
+            return;
+        if (_library.RemoveCustomFolder(folder))
+        {
+            ReloadCustomFolders();
+            // Re-scan so custom-only games may show Not found
+            _library.Scan(force: true);
+            ReloadGamesList();
+        }
+    }
+
+    private void OnAddExe(object? sender, EventArgs e)
+    {
+        using var dlg = new OpenFileDialog
+        {
+            Title = "Select game executable",
+            Filter = "Executable (*.exe)|*.exe|All files (*.*)|*.*",
+            CheckFileExists = true,
+        };
+        if (dlg.ShowDialog(this) != DialogResult.OK)
+            return;
+        var entry = _library.AddManualExe(dlg.FileName);
+        if (entry != null)
+            ReloadGamesList();
     }
 
     private void ApplyAndSave()
     {
+        // Persist checkbox states (already saved live, but sync once more)
+        var updates = new List<(string Id, bool Enabled)>();
+        foreach (ListViewItem item in _gamesList.Items)
+        {
+            if (item.Tag is string id)
+                updates.Add((id, item.Checked));
+        }
+        _library.SetAllEnabled(updates);
+
         _config.Whitelist = _whitelistBox.Text
             .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
             .Select(s => s.Trim())
@@ -284,6 +524,6 @@ public sealed class SettingsForm : Form
 
         _configService.Save(_config);
         try { StartupService.SetStartWithWindows(_config.StartWithWindows); }
-        catch { /* registry may fail in restricted contexts */ }
+        catch { /* registry may fail */ }
     }
 }
