@@ -5,9 +5,9 @@ Aplikasi system-tray untuk Windows 11 yang **menyalakan HDR otomatis** saat game
 System-tray app for Windows 11 that **turns HDR ON** when a fullscreen/borderless game is detected, then **restores the previous HDR state** when the game exits.
 
 
-> **v1.0.6:** Game library (Steam / Epic / XboxGames / custom) with per-game On/Off. Enabled games turn HDR on at **process start** (HDR stays on through Alt-Tab). Fullscreen detection remains as fallback for non-library titles.
+> **v1.0.6:** Game library (Steam / Epic / XboxGames / custom) with per-game On/Off; HDR on at **process start** for enabled games; fullscreen fallback; tray **About…** (version, MIT, GitHub link).
 
-> **v1.0.6:** Perpustakaan game (Steam / Epic / XboxGames / kustom) dengan On/Off per game. Game yang On menyalakan HDR saat **proses mulai** (tetap On saat Alt-Tab). Deteksi fullscreen tetap untuk judul di luar library.
+> **v1.0.6:** Perpustakaan game (Steam / Epic / XboxGames / kustom) On/Off; HDR saat proses mulai; fallback fullscreen; menu tray **About…** (versi, MIT, link GitHub).
 ---
 
 ## Bahasa Indonesia
@@ -48,6 +48,7 @@ Output: `publish\win-x64\AutoHDR.exe`
    - **Toggle HDR now** — nyala/mati HDR manual
    - **Games…** — perpustakaan game (Steam/Epic/Xbox/custom), On/Off per game
    - **Settings** — Games + whitelist fallback, start with Windows, interval poll, HDR
+   - **About…** — app info, version, license, and project link
    - **Exit**
 4. Game di library dengan **On** → HDR saat proses mulai (tetap On saat Alt-Tab). Proses di luar library → deteksi fullscreen (seperti 1.0.5).
 5. Jika HDR tidak didukung, muncul balloon tip peringatan.
@@ -109,7 +110,7 @@ Output: `publish\win-x64\AutoHDR.exe`
 ### Usage
 1. Run `AutoHDR.exe` — it starts in the system tray.
 2. **Enable AutoHDR** (on by default): when a fullscreen game is detected → HDR ON; when the game closes → HDR is restored **only if AutoHDR turned it on**.
-3. Tray menu: Enable/Disable, Toggle HDR now, Settings, Exit.
+3. Tray menu: Enable/Disable, Toggle HDR now, Settings, About…, Exit.
 4. Balloon tip if no HDR-capable display is found.
 
 ### Configuration
