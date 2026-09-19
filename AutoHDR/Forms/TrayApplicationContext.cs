@@ -5,7 +5,7 @@ namespace AutoHDR.Forms;
 
 /// <summary>
 /// System-tray host: arms/disarms AutoHDR, polls for games, toggles HDR.
-/// v1.0.7: library-tracked games enable HDR on process start (no fullscreen wait)
+/// v1.0.6: library-tracked games enable HDR on process start (no fullscreen wait)
 /// and restore only after process exit (+ debounce). Fullscreen detection remains
 /// as fallback for processes not in the library (or with Enabled=Off).
 /// </summary>
@@ -71,6 +71,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _menu.Items.Add(new ToolStripMenuItem("Games…", null, OnGames));
         _menu.Items.Add(new ToolStripMenuItem("Settings…", null, OnSettings));
         _menu.Items.Add(new ToolStripSeparator());
+        _menu.Items.Add(new ToolStripMenuItem("About…", null, OnAbout));
         _menu.Items.Add(new ToolStripMenuItem("Exit", null, OnExit));
 
         _tray = new NotifyIcon
@@ -470,6 +471,19 @@ public sealed class TrayApplicationContext : ApplicationContext
         catch (Exception ex)
         {
             AppLog.Error("OpenSettings failed", ex);
+        }
+    }
+
+    private void OnAbout(object? sender, EventArgs e)
+    {
+        try
+        {
+            using var form = new AboutForm();
+            form.ShowDialog();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("OpenAbout failed", ex);
         }
     }
 
