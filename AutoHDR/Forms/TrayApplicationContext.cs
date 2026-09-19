@@ -5,7 +5,7 @@ namespace AutoHDR.Forms;
 
 /// <summary>
 /// System-tray host: arms/disarms AutoHDR, polls for games, toggles HDR.
-/// v1.0.6: library-tracked games enable HDR on process start (no fullscreen wait)
+/// v1.0.7: library-tracked games enable HDR on process start (no fullscreen wait)
 /// and restore only after process exit (+ debounce). Fullscreen detection remains
 /// as fallback for processes not in the library (or with Enabled=Off).
 /// </summary>
